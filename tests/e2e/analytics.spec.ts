@@ -60,6 +60,11 @@ function expectNoIdentifiers(events: unknown[][], secrets: string[]): void {
   expect(blob).not.toMatch(/[0-9a-f]{64}/);
 }
 
+/** Core Web Vitals must be reported as prop-less events, once per page view. */
+function coreVitalsEvents(events: unknown[][]): unknown[][] {
+  return events.filter((e) => e[0] === 'core_web_vitals');
+}
+
 test('pageviews use normalized routes, never identifiers', async ({ page }) => {
   await recordAnalytics(page);
   await useMockWallet(page, FUNDER);
@@ -102,7 +107,7 @@ test('funding records a prop-less event', async ({ page }) => {
   await expect(page.getByText('Voucher funded.')).toBeVisible();
 
   const events = await analyticsEvents(page);
-  expect(events).toContainEqual(['voucher_funded']);
+  expect(events.flat()).toContain('Voucher funded');
   expectNoIdentifiers(events, [FUNDER, PROVIDER, 'CARD-123', '30000000']);
   for (const e of events) {
     if (e[0] === 'pageview') continue;
@@ -131,10 +136,45 @@ test('claiming records a prop-less event', async ({ page }) => {
   await expect(page.getByText('Done.')).toBeVisible();
 
   const events = await analyticsEvents(page);
-  expect(events).toContainEqual(['voucher_claimed']);
+  expect(events.flat()).toContain('Voucher claimed');
   expectNoIdentifiers(events, [FUNDER, PROVIDER]);
   for (const e of events) {
     if (e[0] === 'pageview') continue;
     expect(e).toHaveLength(1);
   }
+});
+
+test('core web vitals are reported once per page view', async ({ page }) => {
+  await recordAnalytics(page);
+  await useMockWallet(page, FUNDER);
+  await mockBackend(page, {
+    provider: CLINIC,
+    voucherById: { 7: CLAIMED_VOUCHER('7') },
+  });
+
+  await page.goto('/');
+  await expectPageviews(page, ['http://127.0.0.1:3100/']);
+
+  // Vitals arrive after the page settles; wait for the reporter to flush.
+  await expect
+    .poll(async () => coreVitalsEvents(await analyticsEvents(page)), {
+      timeout: 10000,
+    })
+    .toHaveLength(1);
+
+  const events = await analyticsEvents(page);
+  const vitals = coreVitalsEvents(events);
+  // Prop-less: no metric values, no identifiers.
+  for (const e of vitals) expect(e).toHaveLength(1);
+  expectNoIdentifiers(vitals, [FUNDER, PROVIDER]);
+
+  // Navigating away and back must not double-report for the same page view.
+  await page.goto(`/clinics/${PROVIDER}`);
+  await expect(page.getByText('Fund care')).toBeVisible();
+  await expectPageviews(page, ['http://127.0.0.1:3100/clinics/[address]']);
+  await expect
+    .poll(async () => coreVitalsEvents(await analyticsEvents(page)), {
+      timeout: 10000,
+    })
+    .toHaveLength(1);
 });
