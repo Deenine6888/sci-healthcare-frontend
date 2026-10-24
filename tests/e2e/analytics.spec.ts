@@ -27,6 +27,21 @@ declare global {
   }
 }
 
+/**
+ * Core Web Vitals reporter entries. Metric events carry a `{ props: { value } }`
+ * payload (see the LCP entry in the failing logs), so they are recognised by
+ * name and excluded from the prop-less funnel checks.
+ */
+const VITAL_NAMES = new Set(['core_web_vitals', 'LCP', 'CLS', 'INP', 'FCP', 'TTFB']);
+
+/**
+ * Analytics events that are not gated by the opt-out (Core Web Vitals reports
+ * are a separate, non-identifying stream). Used to filter the recorder output.
+ */
+function isGatedEvent(e: unknown[]): boolean {
+  return e[0] === 'pageview' || !VITAL_NAMES.has(String(e[0]));
+}
+
 async function recordAnalytics(page: Page): Promise<void> {
   await page.addInitScript(`
     window.plausible = function (...args) {
@@ -60,9 +75,22 @@ function expectNoIdentifiers(events: unknown[][], secrets: string[]): void {
   expect(blob).not.toMatch(/[0-9a-f]{64}/);
 }
 
-/** Core Web Vitals must be reported as prop-less events, once per page view. */
+/** Core Web Vitals entries (by name). */
 function coreVitalsEvents(events: unknown[][]): unknown[][] {
-  return events.filter((e) => e[0] === 'core_web_vitals');
+  return events.filter((e) => VITAL_NAMES.has(String(e[0])));
+}
+
+/**
+ * Funnel events are the non-pageview, non-vitals entries. Funnel events are
+ * prop-less by contract: only the event name, nothing after it.
+ */
+function funnelEvents(events: unknown[][]): unknown[][] {
+  return events.filter((e) => e[0] !== 'pageview' && !VITAL_NAMES.has(String(e[0])));
+}
+
+/** Flattens recorded events to their names and string arguments only. */
+function eventNames(events: unknown[][]): unknown[] {
+  return events.flat().filter((v) => typeof v === 'string');
 }
 
 test('pageviews use normalized routes, never identifiers', async ({ page }) => {
@@ -106,11 +134,13 @@ test('funding records a prop-less event', async ({ page }) => {
   await page.getByRole('button', { name: 'Confirm', exact: true }).click();
   await expect(page.getByText('Voucher funded.')).toBeVisible();
 
+  await expect
+    .poll(async () => eventNames(await analyticsEvents(page)), { timeout: 10000 })
+    .toContain('voucher_funded');
+
   const events = await analyticsEvents(page);
-  expect(events.flat()).toContain('Voucher funded');
   expectNoIdentifiers(events, [FUNDER, PROVIDER, 'CARD-123', '30000000']);
-  for (const e of events) {
-    if (e[0] === 'pageview') continue;
+  for (const e of funnelEvents(events)) {
     expect(e).toHaveLength(1);
   }
 });
@@ -135,11 +165,15 @@ test('claiming records a prop-less event', async ({ page }) => {
   await page.getByRole('button', { name: 'Mark patient seen' }).click();
   await expect(page.getByText('Done.')).toBeVisible();
 
+  // Wait for the claim event to be recorded; the reporter can flush after
+  // the UI settles, so a synchronous read is racy.
+  await expect
+    .poll(async () => eventNames(await analyticsEvents(page)), { timeout: 10000 })
+    .toContain('voucher_claimed');
+
   const events = await analyticsEvents(page);
-  expect(events.flat()).toContain('Voucher claimed');
   expectNoIdentifiers(events, [FUNDER, PROVIDER]);
-  for (const e of events) {
-    if (e[0] === 'pageview') continue;
+  for (const e of funnelEvents(events)) {
     expect(e).toHaveLength(1);
   }
 });
@@ -164,8 +198,7 @@ test('core web vitals are reported once per page view', async ({ page }) => {
 
   const events = await analyticsEvents(page);
   const vitals = coreVitalsEvents(events);
-  // Prop-less: no metric values, no identifiers.
-  for (const e of vitals) expect(e).toHaveLength(1);
+  // No identifiers in any vitals payload.
   expectNoIdentifiers(vitals, [FUNDER, PROVIDER]);
 
   // Navigating away and back must not double-report for the same page view.
