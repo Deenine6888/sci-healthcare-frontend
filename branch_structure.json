@@ -1,0 +1,21 @@
+{
+  "default_branch": "main",
+  "branches": [
+    "feat/issue-136-feat-web-helpful-empty-states",
+    "feat/issue-151-perf-web-report-core-web-vitals",
+    "main",
+    "origin"
+  ],
+  "parent": {
+    "feat/issue-136-feat-web-helpful-empty-states": "main",
+    "feat/issue-151-perf-web-report-core-web-vitals": "main",
+    "main": null,
+    "origin": "main"
+  },
+  "order": [
+    "main",
+    "feat/issue-136-feat-web-helpful-empty-states",
+    "feat/issue-151-perf-web-report-core-web-vitals",
+    "origin"
+  ]
+}
