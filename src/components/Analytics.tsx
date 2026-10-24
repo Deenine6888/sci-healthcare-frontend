@@ -4,12 +4,8 @@ import { usePathname } from 'next/navigation';
 import Script from 'next/script';
 import { useEffect, useRef } from 'react';
 
-import {
-  flushAnalyticsQueue,
-  reportCoreWebVitals,
-  trackPageview,
-} from '@/lib/analytics';
-import { useAnalyticsOptOut } from '@/lib/analytics-preference';
+import { flushAnalyticsQueue, trackMetric, trackPageview } from '@/lib/analytics';
+import { reportCoreWebVitals, useAnalyticsOptOut } from '@/lib/analytics-preference';
 import { useLowBandwidth } from '@/lib/low-bandwidth';
 
 /**
@@ -51,7 +47,7 @@ export function Analytics({ domain }: { domain: string }) {
     }
     if (vitalsReported.current) return;
     vitalsReported.current = true;
-    return reportCoreWebVitals();
+    return reportCoreWebVitals(({ name, value }) => trackMetric(name, Math.round(value)));
   }, [enabled]);
 
   if (!enabled) return null;
